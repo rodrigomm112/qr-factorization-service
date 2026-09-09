@@ -18,7 +18,7 @@ COPY src ./src
 RUN npm run build
 
 # ---- Runtime: static files behind nginx, unprivileged and non-root ----
-FROM nginxinc/nginx-unprivileged:1.29-alpine AS runtime
+FROM nginxinc/nginx-unprivileged:1.31-alpine AS runtime
 
 USER root
 
