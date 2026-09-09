@@ -1,0 +1,9 @@
+{
+  "type": "urn:proyectot:problem:malformed-json",
+  "title": "Malformed JSON body",
+  "status": 400,
+  "detail": "The request body is not valid JSON.",
+  "instance": "/api/v1/statistics",
+  "requestId": "00000000-0000-4000-8000-000000000000",
+  "timestamp": "2026-09-08T18:30:00.123Z"
+}

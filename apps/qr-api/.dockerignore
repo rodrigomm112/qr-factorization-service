@@ -1,0 +1,17 @@
+# Build context: only what the compiler needs.
+.git
+.gitignore
+.dockerignore
+Dockerfile
+README.md
+.golangci.yml
+
+# Test-only artefacts
+**/*_test.go
+**/testdata/
+coverage.out
+coverage.html
+
+# Local build output
+bin/
+/out/

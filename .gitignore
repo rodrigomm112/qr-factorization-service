@@ -1,0 +1,63 @@
+# ---- Secrets & local environment -------------------------------------------
+.env
+.env.*
+!.env.example
+.env.demo-credentials
+*.pem
+*.key
+service-account*.json
+
+# ---- Go --------------------------------------------------------------------
+bin/
+*.exe
+*.test
+*.out
+coverage.out
+coverage.html
+vendor/
+go.work
+go.work.sum
+
+# ---- Node / npm ------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.npm/
+*.tsbuildinfo
+
+# ---- Build output (Vite / tsc) ---------------------------------------------
+dist/
+build/
+.vite/
+coverage/
+.nyc_output/
+
+# ---- Terraform -------------------------------------------------------------
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# ---- Local toolchain -------------------------------------------------------
+.tools/
+tmp/
+*.tar.gz
+*.zip
+
+# ---- Editors / OS ----------------------------------------------------------
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini

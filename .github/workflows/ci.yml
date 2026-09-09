@@ -1,0 +1,288 @@
+# ---- CI ---------------------------------------------------------------------
+# One job per unit of work, so a red build points at one thing. Every action is pinned to a
+# commit SHA, with the tag it resolved to in the trailing comment; Dependabot bumps them.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: no job writes to the repository.
+permissions:
+  contents: read
+
+# A new push cancels the build still running for the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '24'
+  GOLANGCI_LINT_VERSION: v2.13.2
+  COVERAGE_THRESHOLD: '85'
+
+jobs:
+  qr_api:
+    name: qr-api (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/qr-api
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: apps/qr-api/go.mod
+          cache-dependency-path: apps/qr-api/go.sum
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "${unformatted}" ]; then
+            echo "::error::these files are not gofmt'd:"; echo "${unformatted}"; exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          working-directory: apps/qr-api
+
+      - name: Tests with race detector and coverage
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      # Weighted by statements straight from the profile, not the unweighted per-function
+      # average `go tool cover -func` prints, and only over the layers holding the logic.
+      - name: Coverage gate — internal/domain + internal/application >= 85%
+        run: |
+          go tool cover -func=coverage.out | tail -n 1
+          awk -v threshold="${COVERAGE_THRESHOLD}" '
+            NR == 1 { next }                                              # "mode:" header
+            $0 !~ /internal\/(domain|application)\// { next }
+            { total += $2; if ($3 > 0) covered += $2 }
+            END {
+              if (total == 0) { print "::error::no statements found in internal/domain or internal/application"; exit 1 }
+              pct = 100 * covered / total
+              printf "domain+application coverage: %.2f%% (%d/%d statements)\n", pct, covered, total
+              if (pct + 0 < threshold + 0) {
+                printf "::error::coverage gate failed: %.2f%% < %s%%\n", pct, threshold
+                exit 1
+              }
+            }' coverage.out
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: coverage-qr-api
+          path: apps/qr-api/coverage.out
+          retention-days: 7
+          if-no-files-found: ignore
+
+  stats_api:
+    name: stats-api (Node)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/stats-api
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/stats-api/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests with coverage
+        run: npm run test:coverage
+
+      - name: Build
+        run: npm run build
+
+      # High and critical fail the job; anything lower is a Dependabot PR, not a blocker.
+      - name: npm audit
+        run: npm audit --audit-level=high --omit=dev
+
+  web:
+    name: web (React)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests with coverage
+        run: npm run test:coverage
+
+      - name: Build
+        run: npm run build
+
+      - name: npm audit
+        run: npm audit --audit-level=high --omit=dev
+
+  openapi:
+    name: OpenAPI lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Redocly lint
+        run: npx --yes @redocly/cli@2 lint apps/qr-api/openapi.yaml apps/stats-api/openapi.yaml
+
+  # `-backend=false`: no credentials and no state needed.
+  terraform:
+    name: Terraform (Cloud Run)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy/gcp
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.1
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff
+
+      - name: terraform init
+        run: terraform init -backend=false -input=false
+
+      - name: terraform validate
+        run: terraform validate
+
+  # `load: true` keeps the images in the local daemon so Trivy reads them without a registry.
+  docker:
+    name: Docker build + Trivy
+    runs-on: ubuntu-latest
+    needs: [qr_api, stats_api, web]
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [qr-api, stats-api, web]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Build ${{ matrix.app }}
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: apps/${{ matrix.app }}
+          push: false
+          load: true
+          tags: proyectot/${{ matrix.app }}:ci
+          build-args: VERSION=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+
+      - name: Trivy scan (CRITICAL/HIGH fail the build)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: proyectot/${{ matrix.app }}:ci
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+
+  # The same script a human runs locally and the one that closes `make deploy`.
+  # `--keep` leaves the stack up so the logs can be collected on failure.
+  e2e:
+    name: End-to-end smoke
+    runs-on: ubuntu-latest
+    needs: [docker]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Generate .env and demo credentials
+        run: |
+          cp .env.example .env
+          ./scripts/gen-secrets.sh
+
+      - name: Run the smoke test
+        run: ./scripts/e2e-smoke.sh --keep
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: scripts/package-lock.json
+
+      # The smoke test asserts a few fields with jq; this checks every body, header and
+      # status against `components.schemas`, so an undocumented field fails the build.
+      - name: Contract check against the live stack
+        run: make contract-check
+
+      - name: Collect compose logs
+        if: failure()
+        run: docker compose logs --no-color --tail=500 > compose-logs.txt
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: e2e-compose-logs
+          path: compose-logs.txt
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Tear the stack down
+        if: always()
+        run: docker compose down --volumes --remove-orphans
+
+  # The same containers under a real Chromium: nginx, the CSP, CORS from a browser origin
+  # and the React client, none of which curl exercises.
+  summary:
+    name: CI summary
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [qr_api, stats_api, web, openapi, terraform, docker, e2e]
+    steps:
+      - name: Report
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "## CI results" >> "${GITHUB_STEP_SUMMARY}"
+          echo "$RESULTS" | jq -r 'to_entries[] | "- \(.key): \(.value.result)"' >> "${GITHUB_STEP_SUMMARY}"
+          if echo "$RESULTS" | jq -e 'any(.[]; .result != "success")' >/dev/null; then
+            echo "::error::at least one CI job did not succeed"
+            exit 1
+          fi
+          echo "All jobs succeeded."

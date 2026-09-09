@@ -1,0 +1,1009 @@
+openapi: 3.1.0
+
+info:
+  title: QR API
+  version: 1.0.0
+  summary: QR factorization of a rectangular matrix, enriched with statistics computed by stats-api.
+  description: |
+    Public entry point of **Proyecto T**: the QR factorization `A = Q·R` by Householder
+    reflections, written from scratch with a LAPACK-style scaled 2-norm that neither
+    overflows on `1e200` nor underflows on `1e-200`, sign convention `R[i][i] >= 0`.
+    "Rotation" is read as this factorization in
+    the README.
+
+    `qr-api` then posts `[Q, R]` to `stats-api` (`POST /api/v1/statistics`), forwarding the
+    caller's `Authorization` and `X-Request-ID`, and embeds the answer under `statistics`;
+    a downstream failure surfaces as `502` or `504`, never as a partial `200`. Errors
+    follow RFC 9457 (`application/problem+json`), registry in
+    the shared error contract.
+  license:
+    name: MIT
+    identifier: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development (docker compose)
+  - url: "{baseUrl}"
+    description: Any other deployment, e.g. the Cloud Run service URL
+    variables:
+      baseUrl:
+        default: http://localhost:8080
+        description: Base URL of the deployment, without a trailing slash.
+
+tags:
+  - name: Auth
+    description: Client-credentials token endpoint. Public, rate limited to 10 req/min/IP.
+  - name: QR
+    description: QR factorization of a rectangular matrix.
+  - name: Health
+    description: Liveness and readiness probes. No authentication, no rate limiting.
+  - name: Docs
+    description: >-
+      This contract and the Swagger UI that renders it, both embedded in the binary.
+      No authentication, no rate limiting.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/v1/auth/token:
+    post:
+      tags: [Auth]
+      operationId: issueToken
+      summary: Exchange client credentials for an access token
+      description: |
+        Client-credentials grant: `scripts/gen-secrets.sh` prints the plaintext secret once
+        and stores only its SHA-256 in `AUTH_CLIENT_SECRET_SHA256`, compared in constant
+        time. The HS256 token carries `aud=["qr-api","stats-api"]`, so both services accept
+        it; every credential failure returns the same 401, so client ids cannot be
+        enumerated.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/XRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+            example:
+              clientId: demo-client
+              clientSecret: 0f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778
+      responses:
+        '200':
+          description: Token issued.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+              example:
+                accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJxci1hcGkifQ.signature
+                tokenType: Bearer
+                expiresIn: 3600
+                issuedAt: '2026-09-08T18:30:00Z'
+                scope: qr:compute stats:compute
+        '400':
+          $ref: '#/components/responses/MalformedJson'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '431':
+          $ref: '#/components/responses/RequestHeaderFieldsTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/auth/demo-token:
+    post:
+      tags: [Auth]
+      operationId: issueDemoToken
+      summary: Issue a demo access token without credentials
+      description: |
+        Public-demo path: a browser is a public client and cannot keep a secret, so the SPA
+        gets its token here. Same HS256 token as `/auth/token` (`sub` = `demo`), same
+        audiences and TTL, same per-IP quota as the token route. The route exists only when
+        `DEMO_TOKEN_ENABLED=true`; otherwise it is a plain 404. Confidential clients keep
+        using `/auth/token`.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/XRequestId'
+      responses:
+        '200':
+          description: Demo access token.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              description: Always `no-store`.
+              schema: { type: string, enum: [no-store] }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '404':
+          description: The instance does not issue demo tokens (`DEMO_TOKEN_ENABLED=false`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/qr:
+    post:
+      tags: [QR]
+      operationId: computeQr
+      summary: Factor a rectangular matrix as A = Q x R
+      description: |
+        Validates the matrix (1..100 rows and columns, rectangular, finite numeric cells),
+        computes the Householder QR, then calls `stats-api` with `[Q, R]`. `statistics` is
+        the stats-api body **without its own `requestId`**; the top-level `requestId`
+        correlates the whole exchange.
+      parameters:
+        - $ref: '#/components/parameters/XRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QrRequest'
+            examples:
+              tall:
+                summary: Tall 3x2 (contracts/examples/qr.request.tall-3x2.json)
+                value:
+                  matrix: [[1, 2], [3, 4], [5, 6]]
+              identity:
+                summary: 3x3 identity (contracts/examples/qr.request.identity-3x3.json)
+                value:
+                  matrix: [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+                  mode: full
+              wide:
+                summary: Wide 2x3 (contracts/examples/qr.request.wide-2x3.json)
+                value:
+                  matrix: [[1, 2, 3], [4, 5, 6]]
+              reduced:
+                summary: Thin factors for a tall matrix
+                value:
+                  matrix: [[1, 2], [3, 4], [5, 6]]
+                  mode: reduced
+      responses:
+        '200':
+          description: Factorization and statistics computed.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QrResponse'
+              examples:
+                identity:
+                  summary: Exact golden response (contracts/examples/qr.response.identity-3x3.json)
+                  value:
+                    requestId: 00000000-0000-4000-8000-000000000000
+                    input:
+                      rows: 3
+                      cols: 3
+                    q: [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+                    r: [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+                    statistics:
+                      summary:
+                        max: 1
+                        min: 0
+                        sum: 6
+                        average: 0.3333333333333333
+                        count: 18
+                        anyDiagonal: true
+                      matrices:
+                        - index: 0
+                          label: Q
+                          rows: 3
+                          cols: 3
+                          max: 1
+                          min: 0
+                          sum: 3
+                          average: 0.3333333333333333
+                          isDiagonal: true
+                        - index: 1
+                          label: R
+                          rows: 3
+                          cols: 3
+                          max: 1
+                          min: 0
+                          sum: 3
+                          average: 0.3333333333333333
+                          isDiagonal: true
+                      meta:
+                        summationAlgorithm: neumaier
+                        diagonalTolerance:
+                          absolute: 1e-12
+                          relative: 1e-9
+                        elapsedMs: 0.1
+                    meta:
+                      algorithm: householder
+                      mode: full
+                      qShape: [3, 3]
+                      rShape: [3, 3]
+                      decompositionMs: 0.01
+                      statisticsMs: 1.5
+        '400':
+          $ref: '#/components/responses/MalformedJson'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '431':
+          $ref: '#/components/responses/RequestHeaderFieldsTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '502':
+          $ref: '#/components/responses/DownstreamUnavailable'
+        '504':
+          $ref: '#/components/responses/DownstreamTimeout'
+
+  /health/live:
+    get:
+      tags: [Health]
+      operationId: getLiveness
+      summary: Liveness probe
+      description: Returns 200 as long as the process is running. Never touches dependencies.
+      security: []
+      responses:
+        '200':
+          description: The process is alive.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/health+json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: pass
+                service: qr-api
+                version: 1.0.0
+                uptimeSeconds: 123.4
+
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: getReadiness
+      summary: Readiness probe
+      description: |
+        Calls `GET {STATS_API_BASE_URL}/health/live` with a 1 s timeout and caches the
+        verdict for 2 s, so a probe storm cannot amplify into downstream load. 200 `pass`
+        when the dependency answers, 503 `fail` when it does not.
+      security: []
+      responses:
+        '200':
+          description: 'Ready: stats-api reachable.'
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/health+json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: pass
+                service: qr-api
+                version: 1.0.0
+                uptimeSeconds: 123.4
+                checks:
+                  stats-api:
+                    status: pass
+                    componentType: datastore
+                    observedValue: 3.2
+                    observedUnit: ms
+                    time: '2026-09-08T18:30:00.123Z'
+        '503':
+          description: 'Not ready: stats-api unreachable.'
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/health+json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: fail
+                service: qr-api
+                version: 1.0.0
+                uptimeSeconds: 123.4
+                checks:
+                  stats-api:
+                    status: fail
+                    componentType: datastore
+                    time: '2026-09-08T18:30:00.123Z'
+                    output: connection refused
+
+  /openapi.yaml:
+    get:
+      tags: [Docs]
+      operationId: getOpenApiSpec
+      summary: This OpenAPI document
+      description: |
+        The contract the running binary implements, embedded at build time
+        (`//go:embed openapi.yaml`), so image and documentation cannot drift apart. Outside
+        `/api/v1`: no authentication, no rate limiting, cached for 5 minutes.
+      security: []
+      responses:
+        '200':
+          description: The OpenAPI 3.1 document, as YAML.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              description: '`public, max-age=300`.'
+              required: true
+              schema:
+                type: string
+          content:
+            application/yaml:
+              schema:
+                type: string
+                description: The contents of this document.
+
+  /docs:
+    get:
+      tags: [Docs]
+      operationId: getDocs
+      summary: Swagger UI
+      description: |
+        The vendored Swagger UI rendering `/openapi.yaml`; its assets come from an explicit
+        allow-list under `/docs/*`, which rules out path traversal. This page alone relaxes
+        the Content-Security-Policy to `'self'` plus inline styles; no authentication, no
+        rate limiting, cached for an hour.
+      security: []
+      responses:
+        '200':
+          description: The Swagger UI page.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+            Cache-Control:
+              description: '`public, max-age=3600`.'
+              required: true
+              schema:
+                type: string
+          content:
+            text/html:
+              schema:
+                type: string
+                description: The Swagger UI HTML page.
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        HS256 JWT from `POST /api/v1/auth/token`. Verified with an `alg` allow-list of
+        `["HS256"]`, exact `iss` (`qr-api`), `aud` containing `qr-api`, 30 s clock leeway.
+
+  parameters:
+    XRequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      description: |
+        Correlation id, echoed back when it is a valid UUID, otherwise a fresh UUID v4.
+        Always in the response header and in the body's `requestId`, and forwarded to
+        `stats-api` on the downstream call.
+      schema:
+        type: string
+        format: uuid
+
+  headers:
+    XRequestId:
+      description: Correlation id of this request (echoed or generated).
+      required: true
+      schema:
+        type: string
+        format: uuid
+    RetryAfter:
+      description: Seconds to wait before retrying, as defined by RFC 9110.
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+    CacheControl:
+      description: Always `no-store` on the token endpoint.
+      required: true
+      schema:
+        type: string
+        const: no-store
+
+  responses:
+    MalformedJson:
+      description: The body is not valid JSON (includes the `NaN` / `Infinity` literals).
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: urn:proyectot:problem:malformed-json
+            title: Malformed JSON body
+            status: 400
+            detail: The request body is not valid JSON.
+            instance: /api/v1/qr
+            requestId: 00000000-0000-4000-8000-000000000000
+            timestamp: '2026-09-08T18:30:00.123Z'
+    Unauthorized:
+      description: Missing, malformed, expired or otherwise invalid credentials or bearer token.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: urn:proyectot:problem:unauthorized
+            title: Authentication required
+            status: 401
+            detail: The access token is missing, expired or invalid.
+            instance: /api/v1/qr
+            requestId: 00000000-0000-4000-8000-000000000000
+            timestamp: '2026-09-08T18:30:00.123Z'
+    PayloadTooLarge:
+      description: Body larger than `MAX_BODY_BYTES` (1 MiB by default).
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: urn:proyectot:problem:payload-too-large
+            title: Payload too large
+            status: 413
+            detail: The request body exceeds the 1048576 byte limit.
+            instance: /api/v1/qr
+            requestId: 00000000-0000-4000-8000-000000000000
+            timestamp: '2026-09-08T18:30:00.123Z'
+    RequestHeaderFieldsTooLarge:
+      description: Request line or header block above the server's read buffer (16 KiB).
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: urn:proyectot:problem:request-header-fields-too-large
+            title: Request header fields too large
+            status: 431
+            detail: The request headers exceed the server's buffer.
+            instance: /api/v1/qr
+            requestId: 00000000-0000-4000-8000-000000000000
+            timestamp: '2026-09-08T18:30:00.123Z'
+    UnsupportedMediaType:
+      description: '`Content-Type` is not `application/json`.'
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: urn:proyectot:problem:unsupported-media-type
+            title: Unsupported media type
+            status: 415
+            detail: Content-Type must be application/json.
+            instance: /api/v1/qr
+            requestId: 00000000-0000-4000-8000-000000000000
+            timestamp: '2026-09-08T18:30:00.123Z'
+    ValidationError:
+      description: |
+        Valid JSON that fails semantic validation; always carries `errors[]`. Also used for
+        `numerical_overflow` when the decomposition or the statistics of its factors leave
+        the float64 range — the caller's matrix is the cause, so a downstream
+        `numerical_overflow` is never a 502.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: urn:proyectot:problem:validation-error
+            title: The request body failed validation
+            status: 422
+            detail: 'matrix must be rectangular: row 1 has 3 columns, expected 2'
+            instance: /api/v1/qr
+            requestId: 00000000-0000-4000-8000-000000000000
+            timestamp: '2026-09-08T18:30:00.123Z'
+            errors:
+              - pointer: /matrix/1
+                code: ragged_row
+                message: row 1 has 3 columns, expected 2
+    TooManyRequests:
+      description: |
+        Rate limit exceeded: 60 req/min/IP on `/api/v1/*`, 10 req/min/IP on
+        `/api/v1/auth/token`.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: urn:proyectot:problem:too-many-requests
+            title: Too many requests
+            status: 429
+            detail: Rate limit exceeded. Retry after the window resets.
+            instance: /api/v1/qr
+            requestId: 00000000-0000-4000-8000-000000000000
+            timestamp: '2026-09-08T18:30:00.123Z'
+    InternalError:
+      description: Unexpected failure. Details are logged, never returned.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: urn:proyectot:problem:internal-error
+            title: Internal server error
+            status: 500
+            detail: An unexpected error occurred. Quote the requestId when reporting it.
+            instance: /api/v1/qr
+            requestId: 00000000-0000-4000-8000-000000000000
+            timestamp: '2026-09-08T18:30:00.123Z'
+    DownstreamUnavailable:
+      description: |
+        `stats-api` was unreachable, returned 5xx, rejected the forwarded token or sent an
+        unparseable body. The decomposition succeeded, but this endpoint promises
+        `statistics`, so no partial 200 is emitted.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: urn:proyectot:problem:downstream-unavailable
+            title: Upstream dependency unavailable
+            status: 502
+            detail: The statistics service did not return a usable response.
+            instance: /api/v1/qr
+            requestId: 00000000-0000-4000-8000-000000000000
+            timestamp: '2026-09-08T18:30:00.123Z'
+    DownstreamTimeout:
+      description: >-
+        `stats-api` exceeded `STATS_API_TIMEOUT` on every attempt, or the total
+        `REQUEST_BUDGET` (12 s by default, always below the 15 s write timeout) ran out
+        first. A retry that no longer fits the remaining budget is not attempted.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: urn:proyectot:problem:downstream-timeout
+            title: Upstream dependency timed out
+            status: 504
+            detail: The statistics service did not respond in time.
+            instance: /api/v1/qr
+            requestId: 00000000-0000-4000-8000-000000000000
+            timestamp: '2026-09-08T18:30:00.123Z'
+
+  schemas:
+    Matrix:
+      title: Matrix
+      type: array
+      description: |
+        Rectangular matrix as an array of rows. JSON Schema cannot express rectangularity,
+        so the service enforces it: rows all as long as row 0 (`ragged_row`), 1..100 rows and
+        columns (`empty_matrix`, `empty_row`, `too_many_rows`, `too_many_cols`) and **finite**
+        numeric cells (`invalid_type` for `null`/strings/booleans, `non_finite_value` for
+        `±Infinity`).
+      minItems: 1
+      maxItems: 100
+      items:
+        title: MatrixRow
+        type: array
+        minItems: 1
+        maxItems: 100
+        items:
+          type: number
+          format: double
+      examples:
+        - [[1, 2], [3, 4], [5, 6]]
+
+    TokenRequest:
+      title: TokenRequest
+      type: object
+      required: [clientId, clientSecret]
+      properties:
+        clientId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          examples: [demo-client]
+        clientSecret:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Plaintext secret printed once by `scripts/gen-secrets.sh`.
+          format: password
+
+    TokenResponse:
+      title: TokenResponse
+      type: object
+      required: [accessToken, tokenType, expiresIn, issuedAt, scope]
+      properties:
+        accessToken:
+          type: string
+          description: Signed HS256 JWT, accepted by both `qr-api` and `stats-api`.
+        tokenType:
+          type: string
+          const: Bearer
+        expiresIn:
+          type: integer
+          minimum: 1
+          description: Lifetime in seconds, derived from `JWT_TTL`.
+          examples: [3600]
+        issuedAt:
+          type: string
+          format: date-time
+          description: RFC 3339 issue time. **Volatile.**
+        scope:
+          type: string
+          description: Space-separated scopes granted to the token.
+          examples: ['qr:compute stats:compute']
+
+    QrRequest:
+      title: QrRequest
+      type: object
+      required: [matrix]
+      properties:
+        matrix:
+          $ref: '#/components/schemas/Matrix'
+        mode:
+          $ref: '#/components/schemas/QrMode'
+
+    QrMode:
+      title: QrMode
+      type: string
+      description: |
+        `full` (default): `Q` is `m x m` and `R` is `m x n`, so `Q` is an orthogonal basis of
+        R^m. `reduced`: the thin factors, `Q` is `m x k` and `R` is `k x n` with
+        `k = min(m, n)`, much smaller when `m >> n`; any other value gives `invalid_mode`.
+      enum: [full, reduced]
+      default: full
+
+    MatrixShape:
+      title: MatrixShape
+      type: object
+      required: [rows, cols]
+      properties:
+        rows:
+          type: integer
+          minimum: 1
+        cols:
+          type: integer
+          minimum: 1
+
+    QrMeta:
+      title: QrMeta
+      type: object
+      required: [algorithm, mode, qShape, rShape, decompositionMs, statisticsMs]
+      properties:
+        algorithm:
+          type: string
+          const: householder
+        mode:
+          $ref: '#/components/schemas/QrMode'
+        qShape:
+          $ref: '#/components/schemas/Shape'
+        rShape:
+          $ref: '#/components/schemas/Shape'
+        decompositionMs:
+          type: number
+          minimum: 0
+          description: Time spent in the decomposition. **Volatile.**
+        statisticsMs:
+          type: number
+          minimum: 0
+          description: Wall time of the downstream call, including transport. **Volatile.**
+
+    Shape:
+      title: Shape
+      type: array
+      description: '`[rows, cols]`.'
+      minItems: 2
+      maxItems: 2
+      items:
+        type: integer
+        minimum: 1
+      examples:
+        - [3, 3]
+
+    QrResponse:
+      title: QrResponse
+      type: object
+      required: [requestId, input, q, r, statistics, meta]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+          description: Same value as the `X-Request-ID` response header. **Volatile.**
+        input:
+          $ref: '#/components/schemas/MatrixShape'
+        q:
+          $ref: '#/components/schemas/Matrix'
+        r:
+          $ref: '#/components/schemas/Matrix'
+        statistics:
+          $ref: '#/components/schemas/StatisticsReport'
+        meta:
+          $ref: '#/components/schemas/QrMeta'
+
+    StatisticsReport:
+      title: StatisticsReport
+      type: object
+      description: |
+        Body returned by `stats-api` for `[Q, R]`, **minus its own `requestId`** (the
+        top-level `requestId` correlates the exchange). Duplicated here to keep each document
+        self-contained; it must stay byte-compatible with `StatisticsResponse` in
+        `apps/stats-api/openapi.yaml`.
+      required: [summary, matrices, meta]
+      properties:
+        summary:
+          $ref: '#/components/schemas/StatisticsSummary'
+        matrices:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/MatrixStatistics'
+        meta:
+          $ref: '#/components/schemas/StatisticsMeta'
+
+    StatisticsSummary:
+      title: StatisticsSummary
+      type: object
+      description: The five figures required by the statement, aggregated over Q and R.
+      required: [max, min, sum, average, count, anyDiagonal]
+      properties:
+        max:
+          type: number
+        min:
+          type: number
+        sum:
+          type: number
+          description: Neumaier compensated total.
+        average:
+          type: number
+        count:
+          type: integer
+          minimum: 1
+        anyDiagonal:
+          type: boolean
+
+    MatrixStatistics:
+      title: MatrixStatistics
+      type: object
+      description: Per-matrix breakdown. Index 0 is `Q` and index 1 is `R`.
+      required: [index, label, rows, cols, max, min, sum, average, isDiagonal]
+      properties:
+        index:
+          type: integer
+          minimum: 0
+        label:
+          type: string
+          examples: [Q]
+        rows:
+          type: integer
+          minimum: 1
+        cols:
+          type: integer
+          minimum: 1
+        max:
+          type: number
+        min:
+          type: number
+        sum:
+          type: number
+        average:
+          type: number
+        isDiagonal:
+          type: boolean
+
+    DiagonalTolerance:
+      title: DiagonalTolerance
+      type: object
+      required: [absolute, relative]
+      properties:
+        absolute:
+          type: number
+          minimum: 0
+          examples: [1e-12]
+        relative:
+          type: number
+          minimum: 0
+          examples: [1e-9]
+
+    StatisticsMeta:
+      title: StatisticsMeta
+      type: object
+      required: [summationAlgorithm, diagonalTolerance, elapsedMs]
+      properties:
+        summationAlgorithm:
+          type: string
+          const: neumaier
+        diagonalTolerance:
+          $ref: '#/components/schemas/DiagonalTolerance'
+        elapsedMs:
+          type: number
+          minimum: 0
+          description: Computation time reported by stats-api. **Volatile.**
+
+    ValidationCode:
+      title: ValidationCode
+      type: string
+      description: |
+        Machine-readable validation failure. `invalid_mode` is specific to this service,
+        `too_many_matrices` / `too_many_elements` come only from `stats-api` and
+        `numerical_overflow` from both; the enum is shared so one client parses either.
+      enum:
+        - missing_field
+        - invalid_type
+        - empty_matrix
+        - empty_row
+        - ragged_row
+        - non_finite_value
+        - too_many_rows
+        - too_many_cols
+        - too_many_matrices
+        - too_many_elements
+        - invalid_mode
+        - numerical_overflow
+
+    ValidationIssue:
+      title: ValidationIssue
+      type: object
+      required: [pointer, code, message]
+      properties:
+        pointer:
+          type: string
+          description: >-
+            RFC 6901 JSON Pointer into the request body, e.g. `/matrix/1`. The empty string is
+            the whole-document pointer, used when the body is valid JSON but not an object
+            (`[1,2,3]`, `"x"`, `123`, `null`).
+          examples: ['/matrix/1', '']
+        code:
+          $ref: '#/components/schemas/ValidationCode'
+        message:
+          type: string
+          description: Human-readable explanation. Never echoes matrix contents.
+
+    ProblemDetails:
+      title: ProblemDetails
+      type: object
+      description: |
+        RFC 9457 problem document, identical in both services. See
+        the shared error contract for the full registry of `type` values and titles.
+      required: [type, title, status, instance, requestId, timestamp]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: '`urn:proyectot:problem:<slug>`. Stable; branch on this, not on `title`.'
+          examples: ['urn:proyectot:problem:validation-error']
+        title:
+          type: string
+          description: Constant per `type`.
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+          description: Occurrence-specific explanation. Never contains stack traces or secrets.
+        instance:
+          type: string
+          description: Request path without query string.
+          examples: ['/api/v1/qr']
+        requestId:
+          type: string
+          format: uuid
+          description: Correlation id, equal to the `X-Request-ID` header. **Volatile.**
+        timestamp:
+          type: string
+          format: date-time
+          description: RFC 3339 UTC timestamp with milliseconds. **Volatile.**
+        errors:
+          type: array
+          description: Present only on `validation-error` (422); omitted otherwise.
+          items:
+            $ref: '#/components/schemas/ValidationIssue'
+
+    HealthCheck:
+      title: HealthCheck
+      type: object
+      description: Result of a single dependency probe, keyed by component name.
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [pass, warn, fail]
+        componentType:
+          type: string
+          examples: [datastore]
+        observedValue:
+          type: number
+          description: Measured value, e.g. the round-trip time of the probe.
+        observedUnit:
+          type: string
+          examples: [ms]
+        time:
+          type: string
+          format: date-time
+          description: When the probe ran (results are cached for 2 s). **Volatile.**
+        output:
+          type: string
+          description: Failure reason. Empty or absent when `status` is `pass`.
+
+    HealthResponse:
+      title: HealthResponse
+      type: object
+      description: '`application/health+json` payload (draft-inadarei-api-health-check style).'
+      required: [status, service, version, uptimeSeconds]
+      properties:
+        status:
+          type: string
+          enum: [pass, warn, fail]
+        service:
+          type: string
+          examples: [qr-api]
+        version:
+          type: string
+          examples: ['1.0.0']
+        uptimeSeconds:
+          type: number
+          minimum: 0
+          description: Seconds since process start. **Volatile.**
+        checks:
+          type: object
+          description: Present on `/health/ready`; one entry per dependency.
+          additionalProperties:
+            $ref: '#/components/schemas/HealthCheck'

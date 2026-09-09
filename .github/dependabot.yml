@@ -1,0 +1,86 @@
+# Grouped so a bump is one PR per stack, not one per package. Every manifest pins exact
+# versions (ADR-0012), so these PRs are the only way a dependency moves.
+version: 2
+
+updates:
+  # ---- Go -------------------------------------------------------------------
+  - package-ecosystem: gomod
+    directory: /apps/qr-api
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: 'chore(qr-api)'
+    groups:
+      go-dependencies:
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  # ---- Node -----------------------------------------------------------------
+  - package-ecosystem: npm
+    directory: /apps/stats-api
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: 'chore(stats-api)'
+    groups:
+      production-dependencies:
+        dependency-type: production
+        update-types: [minor, patch]
+      development-dependencies:
+        dependency-type: development
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /apps/web
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: 'chore(web)'
+    groups:
+      production-dependencies:
+        dependency-type: production
+        update-types: [minor, patch]
+      development-dependencies:
+        dependency-type: development
+        update-types: [minor, patch]
+
+  # ---- Base images ----------------------------------------------------------
+  - package-ecosystem: docker
+    directories:
+      - /apps/qr-api
+      - /apps/stats-api
+      - /apps/web
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: 'chore(docker)'
+
+  # ---- GitHub Actions -------------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: 'chore(ci)'
+    groups:
+      actions:
+        patterns: ['*']
+
+  # ---- Terraform ------------------------------------------------------------
+  - package-ecosystem: terraform
+    directory: /deploy/gcp
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: 'chore(deploy)'

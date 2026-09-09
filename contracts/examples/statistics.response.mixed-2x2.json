@@ -1,0 +1,43 @@
+{
+  "requestId": "00000000-0000-4000-8000-000000000000",
+  "summary": {
+    "max": 4,
+    "min": 0,
+    "sum": 11,
+    "average": 1.375,
+    "count": 8,
+    "anyDiagonal": true
+  },
+  "matrices": [
+    {
+      "index": 0,
+      "label": "Q",
+      "rows": 2,
+      "cols": 2,
+      "max": 1,
+      "min": 0,
+      "sum": 2,
+      "average": 0.5,
+      "isDiagonal": true
+    },
+    {
+      "index": 1,
+      "label": "R",
+      "rows": 2,
+      "cols": 2,
+      "max": 4,
+      "min": 0,
+      "sum": 9,
+      "average": 2.25,
+      "isDiagonal": false
+    }
+  ],
+  "meta": {
+    "summationAlgorithm": "neumaier",
+    "diagonalTolerance": {
+      "absolute": 1e-12,
+      "relative": 1e-9
+    },
+    "elapsedMs": 0.18
+  }
+}

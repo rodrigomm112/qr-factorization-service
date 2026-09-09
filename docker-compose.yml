@@ -1,0 +1,147 @@
+# ---- Proyecto T, local topology ---------------------------------------------
+#   stats-api :3000 (Node 24 + Express 5) · qr-api :8080 (Go 1.27 + Fiber v3)
+#   web :8081 (React + Vite behind nginx-unprivileged)
+#   cp .env.example .env && ./scripts/gen-secrets.sh && docker compose up --build
+#
+# Published ports are fixed because the healthchecks below use them. PORT / STATS_PORT in
+# .env only apply to a service run outside compose; changing them means changing both here.
+name: proyectot
+
+x-hardening: &hardening
+  restart: unless-stopped
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  # ---- stats-api — statistics over N matrices, independent of QR --------------
+  stats-api:
+    <<: *hardening
+    build:
+      context: ./apps/stats-api
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${IMAGE_TAG:-local}
+    image: proyectot/stats-api:local
+    container_name: proyectot-stats-api
+    init: true
+    env_file:
+      - .env
+    environment:
+      # STATS_* -> plain names. One .env feeds both services, and qr-api owns the plain
+      # PORT, JWT_AUDIENCE, MAX_BODY_BYTES, RATE_LIMIT_MAX and CORS_ALLOWED_ORIGINS.
+      # `environment:` beats `env_file:`, so these six are what the container sees.
+      PORT: ${STATS_PORT}
+      JWT_AUDIENCE: ${STATS_JWT_AUDIENCE}
+      CORS_ALLOWED_ORIGINS: ${STATS_CORS_ALLOWED_ORIGINS}
+      MAX_BODY_BYTES: ${STATS_MAX_BODY_BYTES}
+      RATE_LIMIT_MAX: ${STATS_RATE_LIMIT_MAX}
+      RATE_LIMIT_WINDOW_MS: ${STATS_RATE_LIMIT_WINDOW_MS}
+      # The rest arrives from env_file, qr-api-only names included (RATE_LIMIT_WINDOW=1m
+      # is a Go duration): stats-api ignores every name outside its config schema.
+    ports:
+      - "3000:3000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 384M
+        reservations:
+          memory: 64M
+    networks: [proyectot]
+
+  # ---- qr-api — public entry point: QR + orchestration of stats-api ----------
+  qr-api:
+    <<: *hardening
+    build:
+      context: ./apps/qr-api
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${IMAGE_TAG:-local}
+    image: proyectot/qr-api:local
+    container_name: proyectot-qr-api
+    env_file:
+      - .env
+    environment:
+      # Plain names come from env_file; only the address is compose-specific (container DNS).
+      PORT: ${PORT}
+      STATS_API_BASE_URL: http://stats-api:3000
+    ports:
+      - "8080:8080"
+    depends_on:
+      stats-api:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      # distroless has no shell and no curl: the binary is the probe.
+      test: ["CMD", "/app/qr-api", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+        reservations:
+          memory: 64M
+    networks: [proyectot]
+
+  # ---- web — static SPA ------------------------------------------------------
+  # Not read_only: the nginx entrypoint writes config.js at startup, so one image serves
+  # both compose and Cloud Run. No env_file either — the browser-facing container must
+  # never receive JWT_SECRET or AUTH_CLIENT_SECRET_SHA256.
+  web:
+    <<: *hardening
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    image: proyectot/web:local
+    container_name: proyectot-web
+    environment:
+      # Resolved by the BROWSER: host URLs, never service names.
+      QR_API_BASE_URL: ${QR_API_BASE_URL}
+      STATS_API_BASE_URL: ${STATS_API_BASE_URL_PUBLIC}
+    ports:
+      # nginx-unprivileged listens on 8080.
+      - "8081:8080"
+    depends_on:
+      qr-api:
+        condition: service_healthy
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+        reservations:
+          memory: 32M
+    networks: [proyectot]
+
+networks:
+  proyectot:
+    driver: bridge

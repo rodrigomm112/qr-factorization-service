@@ -1,0 +1,51 @@
+{
+  "name": "@proyectot/stats-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Statistics API — descriptive statistics over one or more rectangular matrices (Neumaier summation, general diagonal test).",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "dev": "tsx watch src/main.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "cors": "2.8.6",
+    "express": "5.2.1",
+    "express-rate-limit": "8.7.0",
+    "helmet": "8.3.0",
+    "jsonwebtoken": "9.0.3",
+    "pino": "10.3.1",
+    "pino-http": "11.0.0",
+    "swagger-ui-express": "5.0.1",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^24",
+    "@types/supertest": "^7.2.1",
+    "@types/swagger-ui-express": "^4.1.8",
+    "@vitest/coverage-v8": "5.0.0",
+    "eslint": "^10.10.0",
+    "fast-check": "4.9.0",
+    "pino-pretty": "^13.1.3",
+    "supertest": "7.2.2",
+    "tsx": "^4.23.13",
+    "typescript": "6.0.3",
+    "typescript-eslint": "^8.70.0",
+    "vitest": "5.0.0"
+  }
+}

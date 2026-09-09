@@ -1,0 +1,19 @@
+{
+  "name": "@proyectot/scripts",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dependencies of scripts/contract-check.mjs: a JSON Schema validator and a YAML parser.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "contract-check": "node ./contract-check.mjs"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "yaml": "2.9.0"
+  }
+}
