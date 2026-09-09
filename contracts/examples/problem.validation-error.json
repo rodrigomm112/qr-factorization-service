@@ -1,0 +1,16 @@
+{
+  "type": "urn:proyectot:problem:validation-error",
+  "title": "The request body failed validation",
+  "status": 422,
+  "detail": "matrix must be rectangular: row 1 has 3 columns, expected 2",
+  "instance": "/api/v1/qr",
+  "requestId": "00000000-0000-4000-8000-000000000000",
+  "timestamp": "2026-09-08T18:30:00.123Z",
+  "errors": [
+    {
+      "pointer": "/matrix/1",
+      "code": "ragged_row",
+      "message": "row 1 has 3 columns, expected 2"
+    }
+  ]
+}

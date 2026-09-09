@@ -1,0 +1,94 @@
+# golangci-lint v2 schema. Run: golangci-lint run ./...
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  # The "standard" set is errcheck, govet, ineffassign, staticcheck and unused.
+  default: standard
+  enable:
+    - depguard
+    - revive
+    - gocritic
+    - gosec
+    - misspell
+    - unconvert
+    - prealloc
+
+  settings:
+    # The hexagon, enforced here instead of at review: the two inner layers are checked,
+    # and an adapter may import anything.
+    depguard:
+      rules:
+        # internal/domain: the standard library only; it must outlive Fiber, the JWT lib and HTTP.
+        domain:
+          files:
+            - '**/internal/domain/**'
+          allow:
+            - $gostd
+            # The layer itself: qr imports matrix, and _test packages import their subject.
+            - github.com/rodrigomm/proyectot/qr-api/internal/domain
+            # Tests live in the package they exercise; testify never leaks into the binary.
+            - github.com/stretchr/testify
+          deny: &innerLayerDenies
+            - pkg: github.com/gofiber
+              desc: the HTTP framework belongs to adapters/inbound/http, not to the inner layers
+            - pkg: github.com/golang-jwt
+              desc: token signing belongs to platform/security, not to the inner layers
+            - pkg: net/http
+              desc: the inner layers must not know the transport; use the ports in internal/application
+            - pkg: github.com/rodrigomm/proyectot/qr-api/internal/adapters
+              desc: dependencies point inwards; an adapter is never imported by the layers it serves
+            - pkg: github.com/rodrigomm/proyectot/qr-api/internal/platform
+              desc: config, logging and security are wiring; the inner layers receive their values as arguments
+        # internal/application: standard library plus domain; outbound goes through ports.go.
+        application:
+          files:
+            - '**/internal/application/**'
+          allow:
+            - $gostd
+            - github.com/rodrigomm/proyectot/qr-api/internal/domain
+            - github.com/rodrigomm/proyectot/qr-api/internal/application
+            - github.com/stretchr/testify
+          deny: *innerLayerDenies
+    revive:
+      rules:
+        - name: exported
+          arguments: [checkPrivateReceivers, disableStutteringCheck]
+        - name: package-comments
+        - name: context-as-argument
+        - name: error-strings
+        - name: indent-error-flow
+        - name: var-naming
+        - name: unreachable-code
+    gocritic:
+      enabled-tags: [diagnostic, style, performance]
+      disabled-checks:
+        # Fires on the small documented switches that keep the mapper readable.
+        - ifElseChain
+        - singleCaseSwitch
+    gosec:
+      excludes:
+        # A JSON API: the file-inclusion and exec rules have no target, and G104 repeats errcheck.
+        - G104
+    staticcheck:
+      checks: ["all"]
+
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - std-error-handling
+    rules:
+      # Tests assert on unchecked results, allocate freely and hard-code credential-like constants.
+      - path: _test\.go
+        linters: [gosec, errcheck, prealloc, revive, gocritic]
+      # The vendored Swagger UI assets are third-party files.
+      - path: internal/adapters/inbound/http/swaggerui/
+        linters: [revive]
+
+formatters:
+  enable:
+    - gofmt

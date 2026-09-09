@@ -1,0 +1,45 @@
+# Normalize line endings: LF in the repository, LF in the working tree.
+* text=auto eol=lf
+
+# Explicit text types
+*.go            text eol=lf
+*.mod           text eol=lf
+*.sum           text eol=lf
+*.ts            text eol=lf
+*.tsx           text eol=lf
+*.js            text eol=lf
+*.jsx           text eol=lf
+*.json          text eol=lf
+*.yaml          text eol=lf
+*.yml           text eol=lf
+*.md            text eol=lf
+*.html          text eol=lf
+*.css           text eol=lf
+*.http          text eol=lf
+*.tf            text eol=lf
+*.sh            text eol=lf
+Makefile        text eol=lf
+Dockerfile      text eol=lf
+*.Dockerfile    text eol=lf
+
+# Shell scripts must never get CRLF, even on Windows checkouts.
+*.sh            text eol=lf
+scripts/*       text eol=lf
+
+# Binaries
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.ico           binary
+*.webp          binary
+*.pdf           binary
+*.woff          binary
+*.woff2         binary
+*.ttf           binary
+*.gz            binary
+*.zip           binary
+
+# Generated / vendored files excluded from language stats and diffs.
+package-lock.json  linguist-generated=true -diff
+go.sum             linguist-generated=true -diff

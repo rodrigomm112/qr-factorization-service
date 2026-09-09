@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars (gitignored). Secrets stay out: scripts/deploy-gcp.sh exports
+# TF_VAR_jwt_secret and TF_VAR_auth_client_secret_sha256 from .env.
+
+project_id = "interseguro-cloud-508100"
+region     = "us-central1"
+
+# image_tag is absent: scripts/deploy-gcp.sh passes the short git SHA with -var, and a
+# value here would shadow TF_VAR_image_tag.
+
+# Scale to zero while idle; the ceiling is the cost cap.
+min_instances = 0
+max_instances = 3
+
+# Uncomment while developing the frontend locally against the deployed APIs.
+# extra_cors_origins = ["http://localhost:5173"]

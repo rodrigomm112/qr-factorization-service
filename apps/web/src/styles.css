@@ -1,0 +1,451 @@
+/* -----------------------------------------------------------------------------
+   Proyecto T — web client
+   Plain CSS with custom properties. No framework: one hashed file that needs no
+   `style-src 'unsafe-inline'`, because no component sets an inline style
+   attribute. One centred column: header, editor, results, technical details.
+   -------------------------------------------------------------------------- */
+
+:root {
+  --bg: #f5f6fc;
+  --surface: #ffffff;
+  --surface-2: #f5f6fc;
+  --border: #c8d1f1;
+  --text: #454a6c;
+  --text-strong: #1f2444;
+  --text-muted: #74799a;
+  --brand: #0855c4;
+  --accent: #0855c4;
+  --accent-hover: #0747a3;
+  --accent-contrast: #ffffff;
+  --accent-shadow: rgba(8, 85, 196, 0.24);
+  --danger: #a4262c;
+  --danger-bg: #fdf2f2;
+  --ok: #2f7d4f;
+  --warn: #a86a12;
+  --unknown: #8a93a0;
+  --radius: 6px;
+  --radius-card: 25px 0 25px 0;
+  --gap: 1rem;
+  --shell: 72rem;
+  --font-sans: "Sofia Pro", Arial, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12161f;
+    --surface: #1a2030;
+    --surface-2: #202739;
+    --border: #33405f;
+    --text: #dfe3f3;
+    --text-strong: #ffffff;
+    --text-muted: #aab2cf;
+    --brand: #7db3ff;
+    --accent: #2f6fd6;
+    --accent-hover: #4a84e6;
+    --accent-contrast: #ffffff;
+    --accent-shadow: rgba(47, 111, 214, 0.35);
+    --danger: #ff8b8b;
+    --danger-bg: #2a1c1d;
+    --ok: #62c48c;
+    --warn: #e0a94a;
+    --unknown: #7b8593;
+    color-scheme: dark;
+  }
+}
+
+/* Sofia Pro Light, the only weight available; headings fall back to the system semibold. */
+@font-face {
+  font-family: "Sofia Pro";
+  src: url("/fonts/sofiapro-light.otf") format("opentype");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0 clamp(0.75rem, 2vw, 2rem) 3rem;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-weight: 300;
+  font-size: 16px;
+  line-height: 1.5;
+}
+/* Brand rule along the top edge, the only place the two brand blues meet. */
+body::before {
+  content: "";
+  display: block;
+  height: 4px;
+  margin: 0 calc(-1 * clamp(0.75rem, 2vw, 2rem));
+  background: linear-gradient(90deg, #00adee, var(--brand));
+}
+
+h1, h2, h3 { color: var(--brand); font-weight: 600; }
+h1 { font-size: 1.6rem; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 1.1rem; margin: 0 0 0.85rem; }
+h3 { font-size: 0.98rem; margin: 1.25rem 0 0.5rem; }
+strong, b { font-weight: 600; color: var(--text-strong); }
+a { color: var(--brand); }
+code, .mono { font-family: var(--font-mono); font-size: 0.85em; }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  clip-path: inset(50%);
+  overflow: hidden; white-space: nowrap;
+}
+
+/* --------------------------------- shell --------------------------------- */
+
+.shell { max-width: var(--shell); margin: 0 auto; }
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  padding-top: var(--gap);
+  min-width: 0;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 1.25rem 1.4rem;
+  min-width: 0;
+  transition: border-color 0.15s ease;
+}
+.panel:hover { border-color: var(--brand); }
+.panel-head {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 0.5rem var(--gap);
+  margin-bottom: 0.85rem;
+}
+.panel-head h2 { margin: 0; }
+
+/* --------------------------------- header -------------------------------- */
+
+.app-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: 1.25rem 0 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.brand { flex: 1 1 20rem; min-width: 0; }
+.tagline { margin: 0.3rem 0 0; color: var(--text-muted); font-size: 0.95rem; max-width: 46rem; }
+
+.header-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.health { display: flex; flex-wrap: wrap; gap: 0.5rem; list-style: none; margin: 0; padding: 0; }
+.health-badge {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 17px;
+  background: var(--surface);
+  font-size: 0.9rem;
+}
+.health-badge .dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--unknown); }
+.health-badge.pass .dot { background: var(--ok); }
+.health-badge.warn .dot { background: var(--warn); }
+.health-badge.fail .dot { background: var(--danger); }
+.health-name { font-family: var(--font-mono); font-size: 0.85em; }
+.health-status { color: var(--text-muted); }
+
+.session-chip {
+  display: flex; align-items: center; gap: 0.4rem;
+  margin: 0;
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--brand);
+  border-radius: 17px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+.session-chip .countdown { font-variant-numeric: tabular-nums; color: var(--text-strong); }
+
+.session-notice {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem;
+  margin: 0;
+  padding: 0.25rem 0.7rem;
+  border: 1px dashed var(--warn);
+  border-radius: 17px;
+  color: var(--warn);
+  font-size: 0.9rem;
+}
+
+/* --------------------------------- forms --------------------------------- */
+
+.field { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 0.75rem; }
+.field > label, .stepper > label, legend { font-size: 0.9rem; color: var(--text-muted); }
+
+input, select, button {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.45rem 0.65rem;
+}
+input::placeholder { color: var(--text-muted); }
+input:disabled, select:disabled, button:disabled { opacity: 0.55; cursor: not-allowed; }
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+input:hover, select:hover { border-color: var(--brand); }
+
+button { cursor: pointer; background: var(--surface); color: var(--brand); border-color: var(--brand); font-weight: 400; }
+button:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
+button.primary {
+  min-height: 48px;
+  padding: 0.5rem 1.75rem;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+  font-weight: 600;
+  font-size: 1.05rem;
+  box-shadow: 0 6px 12px var(--accent-shadow);
+}
+button.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--accent-contrast); }
+button.secondary {
+  min-height: 42px;
+  padding: 0.5rem 1.25rem;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+button.secondary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--accent-contrast); }
+
+/* A control that reads as prose: the 404 notice and the copy affordances. */
+button.linklike {
+  padding: 0;
+  min-height: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: inherit;
+  text-decoration: underline;
+}
+button.linklike:hover:not(:disabled) { background: none; color: var(--brand); }
+
+button.copy-button {
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.8rem;
+  border-radius: 12px 0 12px 0;
+  vertical-align: middle;
+}
+
+.hint { color: var(--text-muted); font-size: 0.9rem; margin: 0.35rem 0 0; }
+.empty-state { margin: 0; }
+.toggle, .radio { display: flex; align-items: center; gap: 0.35rem; font-size: 0.9rem; }
+
+.editor-controls {
+  display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: flex-end; margin-bottom: 0.9rem;
+}
+.stepper-controls { display: flex; align-items: center; gap: 0.25rem; }
+.icon-button { width: 2rem; padding: 0.25rem; text-align: center; line-height: 1; }
+.stepper-value { width: 4rem; text-align: center; font-family: var(--font-mono); }
+fieldset.mode { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+
+.editor-footer {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 0.75rem var(--gap);
+  margin-top: 1rem;
+}
+.editor-footer .hint { margin: 0; }
+
+.results-footer {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 0.75rem var(--gap);
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.results-footer .hint { margin: 0; flex: 1 1 20rem; }
+
+/* -------------------------------- matrices ------------------------------- */
+
+.matrix-scroll { overflow-x: auto; max-width: 100%; }
+
+.matrix-grid { border-collapse: collapse; }
+.matrix-grid th {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  padding: 0.15rem 0.35rem;
+}
+.matrix-grid td { padding: 2px; }
+.cell {
+  width: 5.5rem;
+  padding: 0.3rem 0.4rem;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  background: var(--surface-2);
+}
+.matrix-grid.readonly td {
+  padding: 0.25rem 0.6rem;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.matrix-grid.readonly td.zero { color: var(--text-muted); }
+
+.matrices { display: flex; flex-wrap: wrap; gap: var(--gap); }
+.matrix-figure { margin: 0; min-width: 0; }
+.matrix-figure figcaption {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 0.25rem;
+  font-size: 0.9rem;
+  margin-bottom: 0.35rem;
+}
+.matrix-name { font-weight: 600; color: var(--brand); }
+.shape { color: var(--text-muted); }
+.matrix-figure figcaption .hint { margin: 0; }
+
+/* ------------------------------- statistics ------------------------------ */
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: 0.5rem;
+  list-style: none; margin: 0.5rem 0; padding: 0;
+}
+.metrics li {
+  display: flex; flex-direction: column; gap: 0.15rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 12px 0 12px 0;
+  background: var(--surface-2);
+}
+.metric-label { font-size: 0.8rem; color: var(--text-muted); }
+.metric-value { font-size: 1.1rem; font-variant-numeric: tabular-nums; color: var(--text-strong); }
+.yes { color: var(--brand); font-weight: 600; }
+.no { color: var(--text-muted); }
+
+.data-table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+.data-table th, .data-table td { border: 1px solid var(--border); padding: 0.3rem 0.5rem; text-align: left; }
+.data-table thead th { background: var(--surface-2); font-weight: 600; }
+.data-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.25rem 0.9rem; margin: 0.5rem 0 0; }
+.kv dt { color: var(--text-muted); font-size: 0.9rem; }
+.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+
+/* --------------------------- technical details --------------------------- */
+
+.tech {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 0.9rem 1.4rem;
+}
+.tech > summary {
+  cursor: pointer;
+  color: var(--brand);
+  font-weight: 600;
+  font-size: 0.95rem;
+  list-style-position: outside;
+}
+.tech[open] > summary { margin-bottom: 0.75rem; }
+.tech h3 { margin: 0; }
+.tech .hint { margin-top: 0.75rem; }
+
+.curl { margin-top: 1.25rem; }
+.curl-head { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+.code-block {
+  overflow-x: auto;
+  margin: 0.6rem 0 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+.tech-meta { margin-top: 1.25rem; }
+
+/* --------------------------------- errors -------------------------------- */
+
+/* Results computed from an input the editor no longer holds (App.tsx). Subtle on
+   purpose: the numbers are still valid, they just describe a previous matrix. */
+.stale-badge {
+  display: block;
+  border: 1px dashed var(--warn);
+  border-radius: var(--radius);
+  color: var(--warn);
+  background: transparent;
+  padding: 0.45rem 0.7rem;
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+}
+
+.alert {
+  border: 1px solid var(--danger);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  background: var(--danger-bg);
+  padding: 0.7rem 0.9rem;
+  margin: 0 0 0.75rem;
+}
+.alert-headline { margin: 0; }
+.alert-detail { margin: 0.35rem 0 0; font-size: 0.9rem; }
+.alert-meta { margin: 0.35rem 0 0; color: var(--text-muted); font-size: 0.8rem; }
+.badge {
+  display: inline-block;
+  margin-right: 0.4rem;
+  padding: 0 0.4rem;
+  border-radius: var(--radius);
+  background: var(--danger);
+  color: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.issues { margin: 0.75rem 0 0; padding-left: 1.1rem; font-size: 0.9rem; }
+.issues .code {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  padding: 0 0.3rem;
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+/* --------------------------------- mobile -------------------------------- */
+
+@media (max-width: 48rem) {
+  h1 { font-size: 1.35rem; }
+  .app-header { flex-direction: column; align-items: stretch; gap: 0.75rem; }
+  /* In a column flex container a `flex-basis` in rem is a HEIGHT: reset the desktop bases,
+     or the header and the results footer grow a 20rem gap nobody asked for. */
+  .brand, .results-footer .hint { flex: 0 0 auto; }
+  .header-status { justify-content: flex-start; }
+  .panel { padding: 1rem; }
+  .tech { padding: 0.8rem 1rem; }
+  .editor-controls { gap: 0.75rem 1rem; }
+  .editor-footer, .results-footer { flex-direction: column; align-items: stretch; }
+  .editor-footer button.primary, .results-footer button.secondary { width: 100%; }
+  .matrices { flex-direction: column; }
+  .kv { grid-template-columns: minmax(0, 1fr); gap: 0 0.9rem; }
+  .kv dd { margin-bottom: 0.5rem; }
+}

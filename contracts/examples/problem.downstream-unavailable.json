@@ -1,0 +1,9 @@
+{
+  "type": "urn:proyectot:problem:downstream-unavailable",
+  "title": "Upstream dependency unavailable",
+  "status": 502,
+  "detail": "The statistics service did not return a usable response.",
+  "instance": "/api/v1/qr",
+  "requestId": "00000000-0000-4000-8000-000000000000",
+  "timestamp": "2026-09-08T18:30:00.123Z"
+}

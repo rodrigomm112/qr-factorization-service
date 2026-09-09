@@ -1,0 +1,739 @@
+openapi: 3.1.0
+
+info:
+  title: Statistics API
+  version: 1.0.0
+  summary: Descriptive statistics over one or more rectangular matrices.
+  description: |
+    Second service of **Proyecto T**: over the values of one or more rectangular matrices it
+    returns `max`, `min`, `average`, `sum` (**Neumaier compensated**, so `[1e16, 1, -1e16]`
+    gives `1`, not `0`) and `anyDiagonal`, plus a per-matrix breakdown. `isDiagonal` takes
+    the general rectangular definition with the scale-invariant tolerance
+    `max(DIAGONAL_ABS_TOLERANCE, DIAGONAL_REL_TOLERANCE * max|a_ij|)`, robust against the
+    `O(‖A‖·u)` residue an upstream QR leaves behind.
+
+    The service knows nothing about QR: `qr-api` is one client (it posts `[Q, R]`), the
+    browser is another. Authentication is a bearer HS256 JWT minted by `qr-api`
+    (`POST /api/v1/auth/token`, or `/auth/demo-token` for the public SPA) whose `aud` contains `stats-api`; errors follow RFC 9457
+    (`application/problem+json`), registry in the shared error contract.
+  license:
+    name: MIT
+    identifier: MIT
+
+servers:
+  - url: http://localhost:3000
+    description: Local development (docker compose)
+  - url: "{baseUrl}"
+    description: Any other deployment, e.g. the Cloud Run service URL
+    variables:
+      baseUrl:
+        default: http://localhost:3000
+        description: Base URL of the deployment, without a trailing slash.
+
+tags:
+  - name: Statistics
+    description: Aggregate statistics over a batch of matrices.
+  - name: Health
+    description: Liveness and readiness probes. No authentication, no rate limiting.
+  - name: Docs
+    description: |
+      This contract and the Swagger UI that renders it. No authentication, no rate
+      limiting, and no CDN: the UI is served from the bundle shipped in the image.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/v1/statistics:
+    post:
+      tags: [Statistics]
+      operationId: computeStatistics
+      summary: Compute statistics over a batch of matrices
+      description: |
+        Accepts 1..8 matrices, each at most 100x100 and 100000 elements in total, in either
+        request shape:
+
+        - **canonical** — `{"matrices":[{"label":"Q","values":[[...]]}, ...]}`
+        - **shorthand** — `{"matrices":[[[...]], [[...]]]}`
+
+        Shorthand items are normalized to `label: "matrix-<i>"` by zero-based position, so
+        both shapes give identical responses apart from the labels. A sum that overflows the
+        double range is answered with `422 numerical_overflow`, never with a `null` the
+        schema forbids.
+      parameters:
+        - $ref: '#/components/parameters/XRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StatisticsRequest'
+            examples:
+              canonical:
+                summary: Canonical form with labels (contracts/examples/statistics.request.mixed-2x2.json)
+                value:
+                  matrices:
+                    - label: Q
+                      values: [[1, 0], [0, 1]]
+                    - label: R
+                      values: [[2, 3], [0, 4]]
+              shorthand:
+                summary: Shorthand form (contracts/examples/statistics.request.shorthand-2x2.json)
+                value:
+                  matrices:
+                    - [[1, 0], [0, 1]]
+                    - [[2, 3], [0, 4]]
+              identity:
+                summary: The two matrices qr-api posts for a 3x3 identity input
+                value:
+                  matrices:
+                    - label: Q
+                      values: [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+                    - label: R
+                      values: [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+      responses:
+        '200':
+          description: Statistics computed.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatisticsResponse'
+              examples:
+                mixed:
+                  summary: Response for the canonical/shorthand example (contracts/examples/statistics.response.mixed-2x2.json)
+                  value:
+                    requestId: 00000000-0000-4000-8000-000000000000
+                    summary:
+                      max: 4
+                      min: 0
+                      sum: 11
+                      average: 1.375
+                      count: 8
+                      anyDiagonal: true
+                    matrices:
+                      - index: 0
+                        label: Q
+                        rows: 2
+                        cols: 2
+                        max: 1
+                        min: 0
+                        sum: 2
+                        average: 0.5
+                        isDiagonal: true
+                      - index: 1
+                        label: R
+                        rows: 2
+                        cols: 2
+                        max: 4
+                        min: 0
+                        sum: 9
+                        average: 2.25
+                        isDiagonal: false
+                    meta:
+                      summationAlgorithm: neumaier
+                      diagonalTolerance:
+                        absolute: 1e-12
+                        relative: 1e-9
+                      elapsedMs: 0.18
+        '400':
+          $ref: '#/components/responses/MalformedJson'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '431':
+          $ref: '#/components/responses/RequestHeaderFieldsTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /health/live:
+    get:
+      tags: [Health]
+      operationId: getLiveness
+      summary: Liveness probe
+      description: Returns 200 as long as the process is running. Never touches dependencies.
+      security: []
+      responses:
+        '200':
+          description: The process is alive.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/health+json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: pass
+                service: stats-api
+                version: 1.0.0
+                uptimeSeconds: 123.4
+
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: getReadiness
+      summary: Readiness probe
+      description: |
+        stats-api has no downstream dependency, so readiness equals liveness and always
+        answers 200. It exists to give orchestrators (compose healthcheck, Cloud Run startup
+        probe) and `qr-api`'s readiness check a stable target.
+      security: []
+      responses:
+        '200':
+          description: Ready to accept traffic.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/health+json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: pass
+                service: stats-api
+                version: 1.0.0
+                uptimeSeconds: 123.4
+
+  /openapi.yaml:
+    get:
+      tags: [Docs]
+      operationId: getOpenApiDocument
+      summary: This OpenAPI document
+      description: |
+        The contract verbatim from disk, so the UI and any code generator read the file that
+        ships with the running image. `HEAD` works too; every other method answers `405`.
+      security: []
+      responses:
+        '200':
+          description: The contract.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/yaml:
+              schema:
+                type: string
+              example: |
+                openapi: 3.1.0
+                info:
+                  title: Statistics API
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+
+  /docs:
+    get:
+      tags: [Docs]
+      operationId: getDocsUi
+      summary: Swagger UI
+      description: |
+        The bundled Swagger UI loading `/openapi.yaml` from this same origin; its CSP allows
+        inline styles only and the bootstrap lives in an external `swagger-ui-init.js`, so
+        `script-src` stays `'self'`. The bare path answers `301` to `/docs/`, the only form
+        that resolves the bundle's relative asset URLs.
+      security: []
+      responses:
+        '200':
+          description: The API reference page, served from `/docs/`.
+          headers:
+            X-Request-ID:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            text/html:
+              schema:
+                type: string
+        '301':
+          description: Redirect from `/docs` to `/docs/`.
+          headers:
+            Location:
+              description: Always `/docs/`.
+              required: true
+              schema:
+                type: string
+                examples: ['/docs/']
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        HS256 JWT minted by `qr-api` (`POST /api/v1/auth/token` or `/auth/demo-token`). Verified with an `alg`
+        allow-list of `["HS256"]`, exact `iss` (`qr-api`), `aud` containing `stats-api`,
+        30 s clock leeway.
+
+  parameters:
+    XRequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      description: |
+        Correlation id. Echoed back when it is a valid UUID, otherwise a fresh UUID v4 is
+        generated. Always present in the response header and in `requestId` of the body.
+      schema:
+        type: string
+        format: uuid
+
+  headers:
+    XRequestId:
+      description: Correlation id of this request (echoed or generated).
+      required: true
+      schema:
+        type: string
+        format: uuid
+    RetryAfter:
+      description: Seconds to wait before retrying, as defined by RFC 9110.
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+
+  responses:
+    MalformedJson:
+      description: The body is not valid JSON (includes the `NaN` / `Infinity` literals).
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: urn:proyectot:problem:malformed-json
+            title: Malformed JSON body
+            status: 400
+            detail: The request body is not valid JSON.
+            instance: /api/v1/statistics
+            requestId: 00000000-0000-4000-8000-000000000000
+            timestamp: '2026-09-08T18:30:00.123Z'
+    Unauthorized:
+      description: Missing, malformed, expired or otherwise invalid bearer token.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: urn:proyectot:problem:unauthorized
+            title: Authentication required
+            status: 401
+            detail: The access token is missing, expired or invalid.
+            instance: /api/v1/statistics
+            requestId: 00000000-0000-4000-8000-000000000000
+            timestamp: '2026-09-08T18:30:00.123Z'
+    MethodNotAllowed:
+      description: Known path, unsupported method. `Allow` lists the verbs that do work.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+        Allow:
+          description: Methods supported on this resource.
+          required: true
+          schema:
+            type: string
+            examples: ['GET, HEAD']
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: urn:proyectot:problem:method-not-allowed
+            title: Method not allowed
+            status: 405
+            detail: 'POST is not supported on this resource; allowed: GET, HEAD.'
+            instance: /openapi.yaml
+            requestId: 00000000-0000-4000-8000-000000000000
+            timestamp: '2026-09-08T18:30:00.123Z'
+    PayloadTooLarge:
+      description: Body larger than `MAX_BODY_BYTES` (4 MiB by default).
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: urn:proyectot:problem:payload-too-large
+            title: Payload too large
+            status: 413
+            detail: The request body exceeds the 4194304 byte limit.
+            instance: /api/v1/statistics
+            requestId: 00000000-0000-4000-8000-000000000000
+            timestamp: '2026-09-08T18:30:00.123Z'
+    RequestHeaderFieldsTooLarge:
+      description: Header block above Node's `maxHeaderSize` (16 KiB).
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: urn:proyectot:problem:request-header-fields-too-large
+            title: Request header fields too large
+            status: 431
+            detail: The request headers exceed the server's buffer.
+            instance: /api/v1/statistics
+            requestId: 00000000-0000-4000-8000-000000000000
+            timestamp: '2026-09-08T18:30:00.123Z'
+    UnsupportedMediaType:
+      description: '`Content-Type` is not `application/json`.'
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: urn:proyectot:problem:unsupported-media-type
+            title: Unsupported media type
+            status: 415
+            detail: Content-Type must be application/json.
+            instance: /api/v1/statistics
+            requestId: 00000000-0000-4000-8000-000000000000
+            timestamp: '2026-09-08T18:30:00.123Z'
+    ValidationError:
+      description: |
+        Valid JSON that fails semantic validation; always carries `errors[]`. Also used for
+        `numerical_overflow` when well-formed values sum outside the double range, so `sum`
+        and `average` cannot be represented; `qr-api` re-reports that verdict as its own 422.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: urn:proyectot:problem:validation-error
+            title: The request body failed validation
+            status: 422
+            detail: 'matrices[0].values must be rectangular: row 1 has 1 column, expected 2'
+            instance: /api/v1/statistics
+            requestId: 00000000-0000-4000-8000-000000000000
+            timestamp: '2026-09-08T18:30:00.123Z'
+            errors:
+              - pointer: /matrices/0/values/1
+                code: ragged_row
+                message: row 1 has 1 column, expected 2
+    TooManyRequests:
+      description: Rate limit exceeded (120 requests per minute per IP by default).
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: urn:proyectot:problem:too-many-requests
+            title: Too many requests
+            status: 429
+            detail: Rate limit exceeded. Retry after the window resets.
+            instance: /api/v1/statistics
+            requestId: 00000000-0000-4000-8000-000000000000
+            timestamp: '2026-09-08T18:30:00.123Z'
+    InternalError:
+      description: Unexpected failure. Details are logged, never returned.
+      headers:
+        X-Request-ID:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+          example:
+            type: urn:proyectot:problem:internal-error
+            title: Internal server error
+            status: 500
+            detail: An unexpected error occurred. Quote the requestId when reporting it.
+            instance: /api/v1/statistics
+            requestId: 00000000-0000-4000-8000-000000000000
+            timestamp: '2026-09-08T18:30:00.123Z'
+
+  schemas:
+    Matrix:
+      title: Matrix
+      type: array
+      description: |
+        Rectangular matrix as an array of rows. JSON Schema cannot express rectangularity,
+        so the service enforces it: rows all as long as row 0 (`ragged_row`), 1..100 rows and
+        columns (`empty_matrix`, `empty_row`, `too_many_rows`, `too_many_cols`) and **finite**
+        numeric cells (`invalid_type` for `null`/strings/booleans, `non_finite_value` for
+        `±Infinity`).
+      minItems: 1
+      maxItems: 100
+      items:
+        title: MatrixRow
+        type: array
+        minItems: 1
+        maxItems: 100
+        items:
+          type: number
+          format: double
+      examples:
+        - [[1, 0], [0, 1]]
+
+    LabeledMatrix:
+      title: LabeledMatrix
+      type: object
+      description: Canonical matrix input. `label` is echoed back in the per-matrix breakdown.
+      required: [values]
+      properties:
+        label:
+          type: string
+          maxLength: 64
+          description: Free-form name. Defaults to `matrix-<index>` when omitted.
+          examples: [Q]
+        values:
+          $ref: '#/components/schemas/Matrix'
+
+    MatrixInput:
+      title: MatrixInput
+      description: |
+        Either the canonical labelled object or the bare `number[][]` shorthand, the latter
+        normalized to `{"label": "matrix-<i>", "values": <the array>}` with `i` the
+        zero-based position in `matrices`.
+      oneOf:
+        - $ref: '#/components/schemas/LabeledMatrix'
+        - $ref: '#/components/schemas/Matrix'
+
+    StatisticsRequest:
+      title: StatisticsRequest
+      type: object
+      required: [matrices]
+      properties:
+        matrices:
+          type: array
+          description: |
+            1..8 matrices (`empty_matrix` / `too_many_matrices`), with the sum of
+            `rows * cols` over all of them at most 100000 (`too_many_elements`). The
+            canonical and shorthand forms can be mixed in one request.
+          minItems: 1
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/MatrixInput'
+
+    StatisticsSummary:
+      title: StatisticsSummary
+      type: object
+      description: The five figures required by the statement, aggregated over every matrix.
+      required: [max, min, sum, average, count, anyDiagonal]
+      properties:
+        max:
+          type: number
+          description: Largest value across all matrices.
+        min:
+          type: number
+          description: Smallest value across all matrices.
+        sum:
+          type: number
+          description: Total sum, Neumaier compensated.
+        average:
+          type: number
+          description: '`sum / count`.'
+        count:
+          type: integer
+          minimum: 1
+          description: Number of values considered (sum of `rows * cols`).
+        anyDiagonal:
+          type: boolean
+          description: True when at least one matrix is diagonal.
+
+    MatrixStatistics:
+      title: MatrixStatistics
+      type: object
+      description: Per-matrix breakdown, in request order.
+      required: [index, label, rows, cols, max, min, sum, average, isDiagonal]
+      properties:
+        index:
+          type: integer
+          minimum: 0
+          description: Zero-based position in the request.
+        label:
+          type: string
+          description: Provided label, or `matrix-<index>` for shorthand input.
+        rows:
+          type: integer
+          minimum: 1
+        cols:
+          type: integer
+          minimum: 1
+        max:
+          type: number
+        min:
+          type: number
+        sum:
+          type: number
+        average:
+          type: number
+        isDiagonal:
+          type: boolean
+          description: |
+            True when every off-diagonal entry satisfies
+            `|a_ij| <= max(absolute, relative * max|a_kl|)`. Defined for any `m x n`, so
+            `[[5]]` and the zero matrix are diagonal while `[[1,2,3]]` is not.
+
+    DiagonalTolerance:
+      title: DiagonalTolerance
+      type: object
+      description: Tolerance actually used for `isDiagonal`, echoed for reproducibility.
+      required: [absolute, relative]
+      properties:
+        absolute:
+          type: number
+          minimum: 0
+          examples: [1e-12]
+        relative:
+          type: number
+          minimum: 0
+          examples: [1e-9]
+
+    StatisticsMeta:
+      title: StatisticsMeta
+      type: object
+      required: [summationAlgorithm, diagonalTolerance, elapsedMs]
+      properties:
+        summationAlgorithm:
+          type: string
+          const: neumaier
+          description: Summation algorithm used for `sum`.
+        diagonalTolerance:
+          $ref: '#/components/schemas/DiagonalTolerance'
+        elapsedMs:
+          type: number
+          minimum: 0
+          description: Server-side computation time. **Volatile**, ignore it in fixture comparisons.
+
+    StatisticsResponse:
+      title: StatisticsResponse
+      type: object
+      required: [requestId, summary, matrices, meta]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+          description: Same value as the `X-Request-ID` response header. **Volatile.**
+        summary:
+          $ref: '#/components/schemas/StatisticsSummary'
+        matrices:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/MatrixStatistics'
+        meta:
+          $ref: '#/components/schemas/StatisticsMeta'
+
+    ValidationCode:
+      title: ValidationCode
+      type: string
+      description: |
+        Machine-readable validation failure. `too_many_matrices` / `too_many_elements` are
+        specific to this service, `invalid_mode` comes only from `qr-api` and
+        `numerical_overflow` from both; the enum is shared so one client parses either.
+      enum:
+        - missing_field
+        - invalid_type
+        - empty_matrix
+        - empty_row
+        - ragged_row
+        - non_finite_value
+        - too_many_rows
+        - too_many_cols
+        - too_many_matrices
+        - too_many_elements
+        - invalid_mode
+        - numerical_overflow
+
+    ValidationIssue:
+      title: ValidationIssue
+      type: object
+      required: [pointer, code, message]
+      properties:
+        pointer:
+          type: string
+          description: RFC 6901 JSON Pointer into the request body, e.g. `/matrices/0/values/1`.
+          examples: ['/matrices/0/values/1']
+        code:
+          $ref: '#/components/schemas/ValidationCode'
+        message:
+          type: string
+          description: Human-readable explanation. Never echoes matrix contents.
+
+    ProblemDetails:
+      title: ProblemDetails
+      type: object
+      description: |
+        RFC 9457 problem document, identical in both services. See
+        the shared error contract for the full registry of `type` values and titles.
+      required: [type, title, status, instance, requestId, timestamp]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: '`urn:proyectot:problem:<slug>`. Stable; branch on this, not on `title`.'
+          examples: ['urn:proyectot:problem:validation-error']
+        title:
+          type: string
+          description: Constant per `type`.
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+          description: Occurrence-specific explanation. Never contains stack traces or secrets.
+        instance:
+          type: string
+          description: Request path without query string.
+          examples: ['/api/v1/statistics']
+        requestId:
+          type: string
+          format: uuid
+          description: Correlation id, equal to the `X-Request-ID` header. **Volatile.**
+        timestamp:
+          type: string
+          format: date-time
+          description: RFC 3339 UTC timestamp with milliseconds. **Volatile.**
+        errors:
+          type: array
+          description: Present only on `validation-error` (422); omitted otherwise.
+          items:
+            $ref: '#/components/schemas/ValidationIssue'
+
+    HealthResponse:
+      title: HealthResponse
+      type: object
+      description: '`application/health+json` payload (draft-inadarei-api-health-check style).'
+      required: [status, service, version, uptimeSeconds]
+      properties:
+        status:
+          type: string
+          enum: [pass, warn, fail]
+        service:
+          type: string
+          examples: [stats-api]
+        version:
+          type: string
+          examples: ['1.0.0']
+        uptimeSeconds:
+          type: number
+          minimum: 0
+          description: Seconds since process start. **Volatile.**
