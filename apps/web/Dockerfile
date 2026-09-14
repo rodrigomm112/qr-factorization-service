@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---- Build: type-check, then bundle with Vite ----
-FROM node:24.20.0-alpine AS build
+FROM node:26.8-alpine AS build
 
 WORKDIR /app
 ENV CI=true
