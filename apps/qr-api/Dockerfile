@@ -3,7 +3,7 @@
 # so the binary implements its own `healthcheck` subcommand instead of shelling out to curl.
 #   docker build -t proyectot/qr-api:local --build-arg VERSION=1.0.0 .
 
-FROM golang:1.27.1-alpine AS build
+FROM golang:1.27.2-alpine AS build
 WORKDIR /src
 
 # Dependencies first: cached until go.mod/go.sum change.
